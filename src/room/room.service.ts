@@ -1,0 +1,89 @@
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { Room } from './room.entity';
+import { CreateRoomDto } from './dto/create-room.dto';
+
+@Injectable()
+export class RoomService {
+  constructor(
+    @InjectRepository(Room)
+    private roomsRepository: Repository<Room>,
+  ) {}
+
+  async create(hotelId: number, createRoomDto: CreateRoomDto): Promise<Room> {
+    const room = this.roomsRepository.create({
+      ...createRoomDto,
+      hotel: { id: hotelId },
+    });
+
+    return this.roomsRepository.save(room);
+  }
+
+  async findAll(hotelId: number): Promise<Room[]> {
+    return this.roomsRepository.find({
+      where: { hotel: { id: hotelId } },
+    });
+  }
+
+  async findOne(id: number): Promise<Room> {
+    const room = await this.roomsRepository.findOne({
+      where: { id },
+      relations: ['hotel', 'bookings'],
+    });
+
+    if (!room) {
+      throw new NotFoundException(`Room with id ${id} not found`);
+    }
+
+    return room;
+  }
+
+  async getAvailability(hotelId: number): Promise<Room[]> {
+    return this.roomsRepository.find({
+      where: { hotel: { id: hotelId }, available: true },
+    });
+  }
+
+  async isAvailableForDateRange(
+    roomId: number,
+    startDate: Date,
+    endDate: Date,
+  ): Promise<boolean> {
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+
+    if (end <= start) {
+      throw new BadRequestException('endDate must be after startDate');
+    }
+
+    const room = await this.findOne(roomId);
+
+    if (room.available === false) {
+      return false;
+    }
+
+    return !(room.bookings ?? []).some(
+      (booking) =>
+        booking.status !== 'cancelled' &&
+        new Date(booking.checkInDate) < end &&
+        new Date(booking.checkOutDate) > start,
+    );
+  }
+
+  async update(id: number, updateData: Partial<CreateRoomDto>): Promise<Room> {
+    await this.findOne(id);
+    await this.roomsRepository.update(id, updateData);
+    return this.findOne(id);
+  }
+
+  async delete(id: number): Promise<boolean> {
+    const result = await this.roomsRepository.delete(id);
+
+    if (!result.affected) {
+      throw new NotFoundException(`Room with id ${id} not found`);
+    }
+
+    return true;
+  }
+}
